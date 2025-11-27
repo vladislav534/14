@@ -25,14 +25,15 @@ class Config:
     # Список бирж для подключения (приоритет по скорости)
     EXCHANGES = [
         'binance', 'bybit', 'okx', 'gateio', 'bitget', 
-        'htx', 'kraken', 'bingx', 'mexc' #'bitfinex', 'dydx', 'kucoin', #'phemex'
+        'htx', 'kraken', 'bingx', 'mexc','kucoin',
+        'deribit', 'phemex'
     ]
     
     # Основные торговые пары фьючерсов
     FUTURES_SYMBOLS = [
         'BTCUSDT', 'ETHUSDT', 'SUIUSDT', 'SOLUSDT',
         'XRPUSDT', 'DOGEUSDT', 'BNBUSDT', 'AVAXUSDT',
-        'DOGEUSDT', 'TAOUSDT', 'LTCUSDT', 'ADAUSDT'
+         'TAOUSDT', 'LTCUSDT', 'ADAUSDT'
     ]
     
     # АГРЕССИВНЫЕ пороги для высокочастотного арбитража
@@ -53,7 +54,7 @@ class Config:
         'gateio': 0.0005, 'bitget': 0.001, 'htx': 0.0006,
         'kraken': 0.0005, 'bingx': 0.0005, 'mexc': 0.0002,
         'kucoin': 0.0006, 'phemex': 0.0006, 'lbank':0.0006,
-        'bitfinex': 0.00065, 'dydx': 0.0005
+        'bitfinex': 0.00065, 'dydx': 0.0005, 'coinw': 0.0006,'deribit': 0.0005
     }
 
 # ==================== ОПТИМИЗИРОВАННОЕ ЛОГГИРОВАНИЕ ====================
@@ -264,41 +265,104 @@ class WebSocketManager:
         except Exception as e:
             logger.debug(f"Connection check error: {e}")
             return False
+    def get_exchange_symbol(self, exchange: str, standard_symbol: str) -> str:
+            """Конвертирует стандартный символ (BTCUSDT) в формат биржи"""
+            base = standard_symbol.replace('USDT', '')
+            
+            if exchange == 'kraken':
+                # Kraken Futures: PI_ = Perpetual Inverse, PF_ = Perpetual Linear
+                # Используем PF_ (Linear) для корректного арбитража с USDT, если доступно, иначе PI_
+                # Маппинг тикеров Kraken (BTC->XBT, DOGE->XDG)
+                mapping = {'BTC': 'XBT', 'DOGE': 'XDG'}
+                kraken_base = mapping.get(base, base)
+                return f"PF_{kraken_base}USD" # Linear Futures
+                
+            elif exchange == 'kucoin':
+                # KuCoin Futures: XBTUSDTM, ETHUSDTM
+                mapping = {'BTC': 'XBT'}
+                kucoin_base = mapping.get(base, base)
+                return f"{kucoin_base}USDTM"
+                
+            elif exchange == 'bitfinex':
+                # Bitfinex Derivatives: tBTCF0:USTF0
+                # Если тикер больше 3 символов (DOGE), формат может отличаться, но обычно t{SYMBOL}F0:USTF0
+                return f"t{base}F0:USTF0"
+                
+            elif exchange == 'bingx':
+                # BingX Swap: BTC-USDT
+                return f"{base}-USDT"
+                
+            elif exchange == 'dydx':
+                # dYdX: BTC-USD
+                return f"{base}-USD"
+            elif exchange == 'mexc':
+            # MEXC Futures: BTC_USDT
+                return f"{base}_USDT"
+            elif exchange == 'bingx':
+            # BingX Swap: BTC-USDT
+                return f"{base}-USDT"
+                
+            elif exchange == 'gateio':
+                return f"{base}_USDT"
+            elif exchange == 'deribit':
+             # Deribit: BTC-PERPETUAL
+             # Поддерживает только BTC, ETH, SOL, XRP, MATIC, USDC и т.д.
+             # Если монеты нет на Deribit, вернем None, чтобы не подписываться
+                if base in ['BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'MATIC', 'LTC', 'DOGE']:
+                    return f"{base}-PERPETUAL"
+                return None
+            elif exchange == 'okx':
+                return f"{base}-USDT-SWAP"
+            elif exchange == 'htx':
+            # HTX Linear Swap: BTC-USDT
+                return f"{base}-USDT"
+            elif exchange == 'gateio':
+             # Gate.io Futures: BTC_USDT
+             return f"{base}_USDT"
+
+            elif exchange == 'okx':
+             # OKX Swap: BTC-USDT-SWAP
+                return f"{base}-USDT-SWAP"
+             
+            elif exchange == 'bybit':
+             # Bybit V5 Linear: BTCUSDT (без изменений, но для явности)
+                return standard_symbol
+            elif exchange == 'coinw':
+                        # CoinW Futures: обычно просто базовый актив для API (BTC) или BTC-USDT
+                return base
+            elif exchange == 'lbank':
+             # LBank Futures: btc_usdt (обычно snake_case)
+                return f"{base.lower()}_usdt"
+            elif exchange == 'binance':
+             # Binance Futures: btcusdt (нижний регистр для стримов)
+                return standard_symbol.lower()
+            elif exchange == 'bitfinex':
+            # Bitfinex: tBTCF0:USTF0
+                return f"t{base}F0:USTF0"
+            
+            elif exchange == 'bitget':
+            # Bitget v2 Futures: BTCUSDT (но instType=USDT-FUTURES)
+                return f"{base}USDT"
+                
+            return standard_symbol # По умолчанию (Binance, Bybit, Phemex, etc.)
     async def connect_exchange_single(self, exchange: str) -> bool:
         """Одна попытка подключения к бирже"""
         try:
-            if exchange == 'binance':
-                return await self.connect_binance()
-            elif exchange == 'bybit':
-                return await self.connect_bybit()
-            elif exchange == 'okx':
-                return await self.connect_okx()
-            elif exchange == 'kraken':
-                return await self.connect_kraken()
-            elif exchange == 'htx':
-                return await self.connect_htx()
-            elif exchange == 'gateio':
-                return await self.connect_gateio()
-            elif exchange == 'bitget':
-                return await self.connect_bitget()
-            elif exchange == 'mexc':
-                return await self.connect_mexc()
-            elif exchange == 'bingx':
-                return await self.connect_bingx()
-            elif exchange == 'kucoin':
-                return await self.connect_kucoin()
-            elif exchange == 'phemex':
-                return await self.connect_phemex()
-            elif exchange == 'coinbase':
-                return await self.connect_coinbase()
-            elif exchange == 'bitfinex':
-                return await self.connect_bitfinex()
-            elif exchange == 'dydx':
-                return await self.connect_dydx()
+            if exchange == 'binance': return await self.connect_binance()
+            elif exchange == 'bybit': return await self.connect_bybit()
+            elif exchange == 'okx': return await self.connect_okx()
+            elif exchange == 'kraken': return await self.connect_kraken()
+            elif exchange == 'htx': return await self.connect_htx()
+            elif exchange == 'gateio': return await self.connect_gateio()
+            elif exchange == 'bitget': return await self.connect_bitget()
+            elif exchange == 'mexc': return await self.connect_mexc()
+            elif exchange == 'bingx': return await self.connect_bingx()
+            elif exchange == 'kucoin': return await self.connect_kucoin()
+            elif exchange == 'phemex': return await self.connect_phemex()
+            elif exchange == 'deribit': return await self.connect_deribit()
             else:
                 logger.warning(f"Unknown exchange: {exchange}")
                 return False
-                
         except Exception as e:
             logger.error(f"Connection error for {exchange}: {e}")
             return False
@@ -376,286 +440,106 @@ class WebSocketManager:
                 logger.error(f"Connection monitor error: {e}")
 
     # ==================== РЕАЛИЗАЦИИ ПОДКЛЮЧЕНИЙ ДЛЯ КАЖДОЙ БИРЖИ ====================
-    async def connect_dydx(self) -> bool:
-        """dYdX упрощенная версия"""
+
+
+
+    async def connect_deribit(self) -> bool:
+        """Deribit Futures WebSocket"""
         try:
-            # Пробуем основной endpoint
-            url = "wss://api.dydx.exchange/v3/ws"
+            url = "wss://www.deribit.com/ws/api/v2"
+            websocket = await websockets.connect(url, ping_interval=20, ping_timeout=10)
+            self.connections['deribit'] = websocket
             
-            logger.info(f"🔄 dYdX: Connecting to {url}")
+            # Формируем каналы: ticker.{instrument_name}.100ms
+            channels = []
+            for symbol in Config.FUTURES_SYMBOLS:
+                deribit_symbol = self.get_exchange_symbol('deribit', symbol)
+                if deribit_symbol: # Пропускаем монеты, которых нет на Deribit
+                    channels.append(f"ticker.{deribit_symbol}.100ms")
             
-            websocket = await websockets.connect(
-                url,
-                ping_interval=30,
-                ping_timeout=20,
-                close_timeout=15
-            )
-            self.connections['dydx'] = websocket
-            
-            # ТОЛЬКО BTC ДЛЯ НАЧАЛА
+            if not channels:
+                logger.warning("⚠️ Deribit: No valid symbols found in config")
+                return True
+
             subscribe_msg = {
-                "type": "subscribe",
-                "channel": "v3_ticker",
-                "id": "BTC-USD"
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "public/subscribe",
+                "params": {
+                    "channels": channels
+                }
             }
             
             await websocket.send(json.dumps(subscribe_msg))
-            logger.info("✅ dYdX subscribed to BTC-USD")
+            logger.info(f"✅ Deribit subscribed to {len(channels)} symbols")
             
-            asyncio.create_task(self.handle_dydx_messages(websocket))
+            asyncio.create_task(self.handle_deribit_messages(websocket))
             return True
             
         except Exception as e:
-            logger.error(f"❌ dYdX connection failed: {e}")
+            logger.error(f"❌ Deribit connection failed: {e}")
             return False
 
-    async def handle_dydx_messages(self, websocket):
-        """Упрощенный обработчик dYdX"""
-        logger.info("📝 dYdX handler started")
-        
+    async def handle_deribit_messages(self, websocket):
+        """Обработчик Deribit"""
         while self.is_running and self.is_connection_open(websocket):
             try:
                 message = await asyncio.wait_for(websocket.recv(), timeout=30)
                 data = json.loads(message)
                 
-                # Обработка тикера
-                if data.get('type') == 'channel_data' and data.get('channel') == 'v3_ticker':
-                    contents = data.get('contents', {})
-                    if 'price' in contents:
-                        price = float(contents['price'])
-                        await self.price_handler.handle_price_update('dydx', 'BTCUSDT', price)
-                        
-                # Обработка подписки
-                elif data.get('type') == 'subscribed':
-                    logger.info(f"✅ dYdX subscription confirmed: {data}")
+                # Пинг (Deribit отвечает на запросы, но для WS достаточно отправлять свой ping)
+                if 'method' in data and data['method'] == 'heartbeat':
+                    await websocket.send(json.dumps({"jsonrpc": "2.0", "method": "public/test", "id": 9999}))
+                    continue
+
+                # Обработка данных
+                if 'params' in data and 'data' in data['params']:
+                    ticker_data = data['params']['data']
+                    instrument = ticker_data.get('instrument_name') # BTC-PERPETUAL
                     
+                    if instrument and 'mark_price' in ticker_data:
+                        # Конвертируем BTC-PERPETUAL -> BTCUSDT
+                        base = instrument.split('-')[0]
+                        symbol = f"{base}USDT"
+                        price = float(ticker_data['mark_price'])
+                        
+                        await self.price_handler.handle_price_update('deribit', symbol, price)
+                        
             except asyncio.TimeoutError:
                 try:
                     if self.is_connection_open(websocket):
-                        ping_msg = {"type": "ping"}
-                        await websocket.send(json.dumps(ping_msg))
+                        # Отправляем test запрос как пинг
+                        await websocket.send(json.dumps({"jsonrpc": "2.0", "method": "public/test", "id": 1000}))
                 except:
                     break
             except Exception as e:
-                logger.error(f"❌ dYdX message error: {e}")
+                logger.error(f"❌ Deribit message error: {e}")
                 break
-        
-        logger.info("🔚 dYdX handler stopped")
-    async def connect_bitfinex(self) -> bool:
-        """Bitfinex упрощенная версия"""
-        try:
-            url = "wss://api-pub.bitfinex.com/ws/2"
-            
-            logger.info(f"🔄 Bitfinex: Connecting to {url}")
-            
-            websocket = await websockets.connect(
-                url,
-                ping_interval=25,
-                ping_timeout=15,
-                close_timeout=10
-            )
-            self.connections['bitfinex'] = websocket
-            
-            # ТОЛЬКО BTC И ETH ДЛЯ НАЧАЛА
-            bitfinex_symbols = ["tBTCUST", "tETHUST"]
-            
-            for symbol_bfx in bitfinex_symbols:
-                subscribe_msg = {
-                    "event": "subscribe",
-                    "channel": "ticker",
-                    "symbol": symbol_bfx
-                }
-                
-                await websocket.send(json.dumps(subscribe_msg))
-                logger.info(f"📨 Bitfinex subscribing to: {symbol_bfx}")
-                await asyncio.sleep(0.3)
-            
-            logger.info("✅ Bitfinex subscriptions sent")
-            
-            asyncio.create_task(self.handle_bitfinex_messages(websocket))
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Bitfinex connection failed: {e}")
-            return False
 
-    async def handle_bitfinex_messages(self, websocket):
-        """Упрощенный обработчик Bitfinex"""
-        logger.info("📝 Bitfinex handler started")
-        
-        symbol_mapping = {}
-        
-        while self.is_running and self.is_connection_open(websocket):
+
+    async def connect_binance(self) -> bool:
+            """Binance Futures WebSocket (Mark Price)"""
             try:
-                message = await asyncio.wait_for(websocket.recv(), timeout=20)
-                data = json.loads(message)
+                # Формируем список стримов: btcusdt@markPrice@1s
+                streams = []
+                for symbol in Config.FUTURES_SYMBOLS:
+                    # get_exchange_symbol вернет lowercase для binance
+                    binance_symbol = self.get_exchange_symbol('binance', symbol)
+                    streams.append(f"{binance_symbol}@markPrice@1s") # 1s обновление для скорости
                 
-                # Обработка ping
-                if data == {"event": "ping"}:
-                    await websocket.send(json.dumps({"event": "pong"}))
-                    continue
-                    
-                # Обработка подписки
-                if isinstance(data, dict) and data.get('event') == 'subscribed':
-                    channel_id = data['chanId']
-                    symbol_bfx = data['symbol']
-                    
-                    # Простой маппинг
-                    if symbol_bfx == "tBTCUST":
-                        symbol = "BTCUSDT"
-                    elif symbol_bfx == "tETHUST":
-                        symbol = "ETHUSDT"
-                    else:
-                        symbol = symbol_bfx.replace('t', '').replace('UST', 'USDT')
-                    
-                    symbol_mapping[channel_id] = symbol
-                    logger.info(f"✅ Bitfinex subscribed to {symbol_bfx} -> {symbol}")
-                    continue
-                    
-                # Обработка тикера
-                if isinstance(data, list) and len(data) > 1:
-                    channel_id = data[0]
-                    ticker_data = data[1]
-                    
-                    if channel_id in symbol_mapping and isinstance(ticker_data, list):
-                        symbol = symbol_mapping[channel_id]
-                        
-                        # Bitfinex ticker format: [BID, BID_SIZE, ASK, ASK_SIZE, DAILY_CHANGE, DAILY_CHANGE_RELATIVE, LAST_PRICE, VOLUME, HIGH, LOW]
-                        if len(ticker_data) >= 7 and ticker_data[6]:
-                            price = float(ticker_data[6])
-                            await self.price_handler.handle_price_update('bitfinex', symbol, price)
+                combined_streams = "/".join(streams)
+                url = f"wss://fstream.binance.com/stream?streams={combined_streams}"
                 
-                # Периодический ping
-                ping_msg = {"event": "ping", "cid": int(time.time())}
-                await websocket.send(json.dumps(ping_msg))
-                            
-            except asyncio.TimeoutError:
-                # Ping при таймауте
-                try:
-                    if self.is_connection_open(websocket):
-                        ping_msg = {"event": "ping", "cid": int(time.time())}
-                        await websocket.send(json.dumps(ping_msg))
-                except:
-                    break
-            except Exception as e:
-                logger.error(f"❌ Bitfinex message error: {e}")
-                break
-        
-        logger.info("🔚 Bitfinex handler stopped")
-    async def connect_coinbase(self) -> bool:
-            """Coinbase: Безопасная подписка (совместимо с VPN)"""
-            try:
-                # Закрываем старое соединение если есть
-                if 'coinbase' in self.connections and self.connections['coinbase']:
-                    try:
-                        await self.connections['coinbase'].close()
-                    except:
-                        pass
-
-                url = "wss://ws-feed.exchange.coinbase.com"
-                logger.info(f"🔄 Coinbase: Connecting to {url}")
+                websocket = await websockets.connect(url, ping_interval=20, ping_timeout=10)
+                self.connections['binance'] = websocket
                 
-                # Убираем пинги, так как Coinbase шлет heartbeat
-                websocket = await websockets.connect(
-                    url,
-                    ping_interval=None,
-                    max_size=None,
-                    close_timeout=10
-                )
-                self.connections['coinbase'] = websocket
-                
-                # СПИСОК СИМВОЛОВ (Сокращенный для стабильности)
-                coinbase_symbols = ["BTC-USD", "ETH-USD", "SOL-USD", "ADA-USD"]
-                
-                logger.info("⏳ Coinbase: Starting SLOW subscription...")
-                
-                for i, symbol in enumerate(coinbase_symbols):
-                    if not self.is_connection_open(websocket):
-                        logger.error("❌ Coinbase: Connection closed during subscription")
-                        return False
-
-                    subscribe_message = {
-                        "type": "subscribe",
-                        "product_ids": [symbol],
-                        "channels": ["ticker"]
-                    }
-                    
-                    await websocket.send(json.dumps(subscribe_message))
-                    logger.info(f"📨 Coinbase: Subscribed to {symbol}")
-                    
-                    # !!! ВАЖНО: ЗАДЕРЖКА 1.5 СЕКУНДЫ !!!
-                    # Это предотвращает бан IP вашего VPN
-                    await asyncio.sleep(1.5)
-                
-                asyncio.create_task(self.handle_coinbase_messages_improved(websocket))
+                logger.info(f"✅ Binance subscribed to {len(streams)} streams")
+                asyncio.create_task(self.handle_binance_messages(websocket))
                 return True
                 
             except Exception as e:
-                logger.error(f"❌ Coinbase connection failed: {e}")
+                logger.error(f"❌ Binance connection failed: {e}")
                 return False
-
-    async def handle_coinbase_messages_improved(self, websocket):
-        """Улучшенный обработчик Coinbase"""
-        logger.info("📝 Coinbase improved handler started")
-        
-        while self.is_running and self.is_connection_open(websocket):
-            try:
-                message = await asyncio.wait_for(websocket.recv(), timeout=30)
-                data = json.loads(message)
-                
-                # Логируем первые несколько сообщений для диагностики
-                # logger.info(f"🔍 Coinbase message: {data}")
-                
-                # Обработка тикера
-                if data.get('type') == 'ticker' and 'product_id' in data:
-                    symbol_cb = data['product_id']  # Формат "BTC-USD"
-                    symbol = symbol_cb.replace('-USD', 'USDT')
-                    
-                    if 'price' in data:
-                        price = float(data['price'])
-                        await self.price_handler.handle_price_update('coinbase', symbol, price)
-                        # logger.info(f"✅ Coinbase price update: {symbol} = {price}")
-                        
-                # Обработка подписки
-                # elif data.get('type') == 'subscriptions':
-                #     # logger.info(f"✅ Coinbase subscription confirmed: {data}")
-                    
-                # Обработка ошибок
-                elif data.get('type') == 'error':
-                    logger.error(f"❌ Coinbase error: {data}")
-                    
-            except asyncio.TimeoutError:
-                # Coinbase не требует ping, но проверим соединение
-                try:
-                    if self.is_connection_open(websocket):
-                        await websocket.ping()
-                except:
-                    break
-            except websockets.exceptions.ConnectionClosed as e:
-                logger.info(f"🔌 Coinbase connection closed: {e}")
-                break
-            except Exception as e:
-                logger.error(f"❌ Coinbase message error: {e}")
-                break
-        
-        logger.info("🔚 Coinbase handler stopped")
-    async def connect_binance(self) -> bool:
-        """Binance Futures WebSocket"""
-        try:
-            symbols = [s.lower() for s in Config.FUTURES_SYMBOLS]
-            streams = [f"{s}@markPrice@1s" for s in symbols]
-            combined_streams = "/".join(streams)
-            url = f"wss://fstream.binance.com/stream?streams={combined_streams}"
-            
-            websocket = await websockets.connect(url, ping_interval=20, ping_timeout=10)
-            self.connections['binance'] = websocket
-            
-            asyncio.create_task(self.handle_binance_messages(websocket))
-            return True
-            
-        except Exception as e:
-            logger.error(f"Binance connection failed: {e}")
-            return False
 
     async def handle_binance_messages(self, websocket):
         """Обработка сообщений Binance"""
@@ -664,62 +548,93 @@ class WebSocketManager:
                 message = await asyncio.wait_for(websocket.recv(), timeout=30)
                 data = json.loads(message)
                 
+                # Формат комбинированного стрима: {"stream": "...", "data": {...}}
                 if 'data' in data:
-                    symbol = data['data']['s']
-                    price = float(data['data']['p'])
-                    await self.price_handler.handle_price_update('binance', symbol, price,)
+                    payload = data['data']
+                    symbol = payload.get('s') # Символ в верхнем регистре (BTCUSDT)
+                    price = float(payload.get('p')) # Mark Price
+                    
+                    if symbol and price:
+                        await self.price_handler.handle_price_update('binance', symbol, price)
                     
             except asyncio.TimeoutError:
-                await websocket.ping()
+                # Binance сам разрывает соединение раз в 24ч, но пинги держит websockets
+                continue
             except Exception as e:
-                logger.error(f"Binance message error: {e}")
+                logger.error(f"❌ Binance message error: {e}")
                 break
 
     async def connect_bybit(self) -> bool:
-        """Bybit Futures WebSocket"""
+        """Bybit V5 Futures WebSocket"""
         try:
+            # V5 public linear endpoint
             url = "wss://stream.bybit.com/v5/public/linear"
             
             websocket = await websockets.connect(url, ping_interval=20, ping_timeout=10)
             self.connections['bybit'] = websocket
             
-            subscribe_msg = {
-                "op": "subscribe",
-                "args": [f"tickers.{symbol}" for symbol in Config.FUTURES_SYMBOLS]
-            }
+            # Подписка на тикеры
+            args = []
+            for symbol in Config.FUTURES_SYMBOLS:
+                bybit_symbol = self.get_exchange_symbol('bybit', symbol)
+                args.append(f"tickers.{bybit_symbol}")
             
-            await websocket.send(json.dumps(subscribe_msg))
+            # Разбиваем на пачки по 10 (лимит Bybit на одно сообщение)
+            for i in range(0, len(args), 10):
+                chunk = args[i:i+10]
+                subscribe_msg = {
+                    "op": "subscribe",
+                    "args": chunk,
+                    "req_id": f"sub_{int(time.time())}_{i}"
+                }
+                await websocket.send(json.dumps(subscribe_msg))
+                await asyncio.sleep(0.1)
+            
+            logger.info(f"✅ Bybit subscribed to {len(args)} symbols")
             asyncio.create_task(self.handle_bybit_messages(websocket))
             return True
             
         except Exception as e:
-            logger.error(f"Bybit connection failed: {e}")
+            logger.error(f"❌ Bybit connection failed: {e}")
             return False
 
     async def handle_bybit_messages(self, websocket):
-        """Обработка сообщений Bybit"""
+        """Обработка сообщений Bybit V5"""
         while self.is_running and self.is_connection_open(websocket):
             try:
                 message = await asyncio.wait_for(websocket.recv(), timeout=30)
                 data = json.loads(message)
                 
-                if data.get('op') == 'ping':
-                    pong_msg = {"op": "pong"}
-                    await websocket.send(json.dumps(pong_msg))
+                # Обработка успеха подписки
+                if data.get('op') == 'subscribe':
                     continue
                     
+                # Топик tickers.{symbol}
                 if data.get('topic', '').startswith('tickers.'):
-                    symbol = data['data']['symbol']
-                    
-                    if 'lastPrice' in data['data'] and data['data']['lastPrice']:
-                        price = float(data['data']['lastPrice'])
-                        await self.price_handler.handle_price_update('bybit', symbol, price, )
+                    if 'data' in data:
+                        # Data может быть словарем (snapshot) или списком (update)
+                        # В V5 linear tickers всегда приходят как словарь внутри data?
+                        # Проверим структуру: data: { symbol: ..., lastPrice: ... }
+                        ticker_data = data['data']
+                        
+                        symbol = ticker_data.get('symbol')
+                        price = None
+                        
+                        if 'lastPrice' in ticker_data:
+                            price = float(ticker_data['lastPrice'])
+                            
+                        if symbol and price:
+                            await self.price_handler.handle_price_update('bybit', symbol, price)
                     
             except asyncio.TimeoutError:
-                ping_msg = {"op": "ping"}
-                await websocket.send(json.dumps(ping_msg))
+                # Отправляем свой пинг
+                try:
+                    if self.is_connection_open(websocket):
+                        await websocket.send(json.dumps({"op": "ping"}))
+                except:
+                    break
             except Exception as e:
-                logger.error(f"Bybit message error: {e}")
+                logger.error(f"❌ Bybit message error: {e}")
                 break
 
     async def connect_okx(self) -> bool:
@@ -727,27 +642,31 @@ class WebSocketManager:
         try:
             url = "wss://ws.okx.com:8443/ws/v5/public"
             
-            websocket = await websockets.connect(url, ping_interval=20, ping_timeout=10)
+            websocket = await websockets.connect(url, ping_interval=25, ping_timeout=15)
             self.connections['okx'] = websocket
             
-            symbols_for_okx = [f"{symbol.replace('USDT', '-USDT-SWAP')}" for symbol in Config.FUTURES_SYMBOLS]
+            # Формируем аргументы подписки
+            args = []
+            for symbol in Config.FUTURES_SYMBOLS:
+                okx_symbol = self.get_exchange_symbol('okx', symbol) # BTC-USDT-SWAP
+                args.append({
+                    "channel": "mark-price", # Или "tickers" для last price
+                    "instId": okx_symbol
+                })
             
             subscribe_msg = {
                 "op": "subscribe",
-                "args": [
-                    {
-                        "channel": "mark-price",
-                        "instId": symbol
-                    } for symbol in symbols_for_okx
-                ]
+                "args": args
             }
             
             await websocket.send(json.dumps(subscribe_msg))
+            logger.info(f"✅ OKX subscribed to {len(args)} symbols")
+            
             asyncio.create_task(self.handle_okx_messages(websocket))
             return True
             
         except Exception as e:
-            logger.error(f"OKX connection failed: {e}")
+            logger.error(f"❌ OKX connection failed: {e}")
             return False
 
     async def handle_okx_messages(self, websocket):
@@ -757,119 +676,157 @@ class WebSocketManager:
                 message = await asyncio.wait_for(websocket.recv(), timeout=30)
                 data = json.loads(message)
                 
-                if data.get('op') == 'ping':
-                    pong_msg = {"op": "pong"}
-                    await websocket.send(json.dumps(pong_msg))
+                # Проверка на успешную подписку
+                if data.get('event') == 'subscribe':
                     continue
                     
+                # Данные mark-price
                 if 'arg' in data and data['arg']['channel'] == 'mark-price':
-                    if 'data' in data and len(data['data']) > 0:
-                        symbol = data['arg']['instId']
-                        symbol = symbol.replace('-USDT-SWAP', 'USDT')
-                        if 'markPx' in data['data'][0]:
-                            price = float(data['data'][0]['markPx'])
-                            await self.price_handler.handle_price_update('okx', symbol, price, )
+                    inst_id = data['arg']['instId']
+                    # Конвертируем обратно в BTCUSDT
+                    symbol = inst_id.replace('-USDT-SWAP', 'USDT')
+                    
+                    if 'data' in data and data['data']:
+                        ticker = data['data'][0]
+                        if 'markPx' in ticker:
+                            price = float(ticker['markPx'])
+                            await self.price_handler.handle_price_update('okx', symbol, price)
                             
             except asyncio.TimeoutError:
-                ping_msg = {"op": "ping"}
-                await websocket.send(json.dumps(ping_msg))
+                # OKX требует строковый "ping"
+                try:
+                    if self.is_connection_open(websocket):
+                        await websocket.send("ping")
+                except:
+                    break
             except Exception as e:
-                logger.error(f"OKX message error: {e}")
+                logger.error(f"❌ OKX message error: {e}")
                 break
 
     async def connect_kraken(self) -> bool:
-        """Kraken Futures WebSocket"""
-        try:
-            url = "wss://futures.kraken.com/ws/v1"
-            websocket = await websockets.connect(url)
-            self.connections['kraken'] = websocket
-            
-            # Kraken поддерживает только BTC и ETH
-            symbol_map = {"BTCUSDT": "PI_XBTUSD", "ETHUSDT": "PI_ETHUSD"}
-            product_ids = [symbol_map[s] for s in ['BTCUSDT', 'ETHUSDT']]
-            
-            subscribe_msg = {
-                "event": "subscribe",
-                "feed": "ticker", 
-                "product_ids": product_ids
-            }
-            
-            await websocket.send(json.dumps(subscribe_msg))
-            asyncio.create_task(self.handle_kraken_messages(websocket))
-            return True
-            
-        except Exception as e:
-            logger.error(f"Kraken connection failed: {e}")
-            return False
+            """Kraken Futures WebSocket (Dynamic Symbols)"""
+            try:
+                url = "wss://futures.kraken.com/ws/v1"
+                websocket = await websockets.connect(url)
+                self.connections['kraken'] = websocket
+                
+                # Генерируем список product_ids динамически
+                product_ids = []
+                for s in Config.FUTURES_SYMBOLS:
+                    # Используем вспомогательную функцию или логику на месте
+                    # Пример для Kraken: BTC -> pf_xbtusd
+                    base = s.replace('USDT', '')
+                    if base == 'BTC': base = 'XBT'
+                    if base == 'DOGE': base = 'XDG'
+                    # Пробуем подписаться на Linear Futures (PF_)
+                    product_ids.append(f"PF_{base}USD")
+                
+                logger.info(f"🦑 Kraken subscribing to: {product_ids}")
+
+                subscribe_msg = {
+                    "event": "subscribe",
+                    "feed": "ticker", 
+                    "product_ids": product_ids
+                }
+                
+                await websocket.send(json.dumps(subscribe_msg))
+                asyncio.create_task(self.handle_kraken_messages(websocket))
+                return True
+                
+            except Exception as e:
+                logger.error(f"Kraken connection failed: {e}")
+                return False
 
     async def handle_kraken_messages(self, websocket):
-            """Обработка сообщений Kraken (FIXED: Ping Timeout)"""
+            """Обработка сообщений Kraken (ИСПРАВЛЕНО: поддержка PF_ символов)"""
             logger.info("📝 Kraken handler started")
-            symbol_map = {"PI_XBTUSD": "BTCUSDT", "PI_ETHUSD": "ETHUSDT"}
             
-            try:
-                while self.is_running and self.is_connection_open(websocket):
-                    try:
-                        # Увеличиваем таймаут ожидания
-                        message = await asyncio.wait_for(websocket.recv(), timeout=20)
-                        data = json.loads(message)
-                        
-                        if 'event' in data and data['event'] == 'heartbeat':
-                            continue
-                            
-                        if 'product_id' in data and 'markPrice' in data:
-                            symbol = symbol_map.get(data['product_id'])
-                            if symbol:
-                                price = float(data['markPrice'])
-                                await self.price_handler.handle_price_update('kraken', symbol, price)
-                                
-                    except asyncio.TimeoutError:
-                        # Вместо отправки пинга вручную (который вызывает ошибку),
-                        # просто логируем. Websockets сам управляет пингами.
-                        logger.debug("⏰ Kraken: No data for 20s")
-                        # Если соединение реально мертвое, следующий recv() выбросит ошибку
+            while self.is_running and self.is_connection_open(websocket):
+                try:
+                    message = await asyncio.wait_for(websocket.recv(), timeout=30)
+                    data = json.loads(message)
+                    
+                    # Игнорируем сервисные сообщения
+                    if 'event' in data:
                         continue
+                    
+                    # Данные тикера Kraken приходят в формате:
+                    # {"feed": "ticker", "product_id": "PF_XBTUSD", "bid": ..., "ask": ...}
+                    # Или иногда: [timestamp, {"b":...}, "ticker", "PF_XBTUSD"] (v1 old format)
+                    
+                    product_id = None
+                    price = None
+
+                    # Вариант 1: JSON объект (v2/v3)
+                    if isinstance(data, dict):
+                        if 'product_id' in data and 'markPrice' in data:
+                            product_id = data['product_id']
+                            price = float(data['markPrice'])
+                    
+                    # Если нашли данные
+                    if product_id and price:
+                        # Динамическая конвертация: PF_XBTUSD -> BTCUSDT
+                        # 1. Убираем префикс PF_ или PI_
+                        clean_id = product_id.replace('PF_', '').replace('PI_', '').replace('FI_', '')
                         
-                    except Exception as e:
-                        logger.error(f"❌ Kraken message processing error: {e}")
-                        # Не выходим из цикла при ошибке парсинга, но выходим при разрыве
-                        if "ConnectionClosed" in str(e) or "1011" in str(e):
-                            raise e
-                            
-            except Exception as e:
-                logger.warning(f"🔌 Kraken connection lost: {e}")
-            finally:
-                logger.info("🔚 Kraken handler stopped")
+                        # 2. Убираем USD с конца
+                        base_currency = clean_id.replace('USD', '')
+                        
+                        # 3. Исправляем тикеры Kraken (XBT->BTC, XDG->DOGE)
+                        if base_currency == 'XBT': base_currency = 'BTC'
+                        if base_currency == 'XDG': base_currency = 'DOGE'
+                        
+                        # 4. Собираем стандартный символ
+                        symbol = f"{base_currency}USDT"
+                        
+                        # Обновляем цену
+                        await self.price_handler.handle_price_update('kraken', symbol, price)
+
+                except asyncio.TimeoutError:
+                    # Kraken шлет heartbeat, таймауты редки, но возможны
+                    continue
+                except Exception as e:
+                    logger.error(f"❌ Kraken message processing error: {e}")
+                    # Не разрываем соединение при единичной ошибке парсинга
+                    continue
 
     async def connect_htx(self) -> bool:
-        """HTX Futures WebSocket"""
-        try:
-            url = "wss://api.hbdm.com/linear-swap-ws"
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+            """HTX Futures WebSocket (Linear Swap)"""
+            try:
+                # Эндпоинт для USDT-M (Linear Swap)
+                url = "wss://api.hbdm.com/linear-swap-ws"
+                
+                # SSL контекст обязателен для HTX иногда
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
 
-            websocket = await websockets.connect(url, ssl=ssl_context, ping_interval=20, ping_timeout=10)
-            self.connections['htx'] = websocket
+                websocket = await websockets.connect(url, ssl=ssl_context, ping_interval=20, ping_timeout=10)
+                self.connections['htx'] = websocket
 
-            # HTX не поддерживает MATICUSDT
-            supported_symbols = [s for s in Config.FUTURES_SYMBOLS if s != 'MATICUSDT']
-            
-            for symbol in supported_symbols:
-                htx_swap_symbol = symbol.replace("USDT", "-USDT")
-                subscribe_msg = {
-                    "sub": f"market.{htx_swap_symbol}.bbo",
-                    "id": f"id_{int(time.time())}"
-                }
-                await websocket.send(json.dumps(subscribe_msg))
-                await asyncio.sleep(0.1)
+                # HTX не поддерживает некоторые монеты в Linear Swap, проверяем конфиг
+                # MATIC часто вызывает проблемы, лучше исключить если есть
+                
+                for symbol in Config.FUTURES_SYMBOLS:
+                    # Получаем BTC-USDT
+                    htx_symbol = self.get_exchange_symbol('htx', symbol)
+                    
+                    # Подписка на BBO (Best Bid Offer) - это быстрее чем ticker для арбитража
+                    subscribe_msg = {
+                        "sub": f"market.{htx_symbol}.bbo",
+                        "id": f"id_{int(time.time())}_{symbol}"
+                    }
+                    await websocket.send(json.dumps(subscribe_msg))
+                    # HTX не любит спам подписками, нужна пауза
+                    await asyncio.sleep(0.05)
 
-            asyncio.create_task(self.handle_htx_messages(websocket))
-            return True
+                logger.info(f"✅ HTX subscribed to symbols via BBO")
+                asyncio.create_task(self.handle_htx_messages(websocket))
+                return True
 
-        except Exception as e:
-            logger.error(f"HTX connection failed: {e}")
-            return False
+            except Exception as e:
+                logger.error(f"❌ HTX connection failed: {e}")
+                return False
 
     async def handle_htx_messages(self, websocket):
         """Обработка сообщений HTX"""
@@ -936,27 +893,33 @@ class WebSocketManager:
     async def connect_gateio(self) -> bool:
         """Gate.io Futures WebSocket"""
         try:
+            # URL для USDT-M Futures
             url = "wss://fx-ws.gateio.ws/v4/ws/usdt"
             
             websocket = await websockets.connect(url, ping_interval=20, ping_timeout=10)
             self.connections['gateio'] = websocket
             
+            # Gate.io принимает список пейлоадов
+            payloads = []
             for symbol in Config.FUTURES_SYMBOLS:
-                gate_symbol = symbol.replace('USDT', '_USDT')
-                subscribe_msg = {
-                    "time": int(time.time()),
-                    "channel": "futures.tickers",
-                    "event": "subscribe", 
-                    "payload": [gate_symbol]
-                }
-                await websocket.send(json.dumps(subscribe_msg))
-                await asyncio.sleep(0.1)
+                gate_symbol = self.get_exchange_symbol('gateio', symbol) # BTC_USDT
+                payloads.append(gate_symbol)
+                
+            subscribe_msg = {
+                "time": int(time.time()),
+                "channel": "futures.tickers",
+                "event": "subscribe", 
+                "payload": payloads
+            }
+            
+            await websocket.send(json.dumps(subscribe_msg))
+            logger.info(f"✅ Gate.io subscribed to {len(payloads)} symbols")
             
             asyncio.create_task(self.handle_gateio_messages(websocket))
             return True
             
         except Exception as e:
-            logger.error(f"Gate.io connection failed: {e}")
+            logger.error(f"❌ Gate.io connection failed: {e}")
             return False
 
     async def handle_gateio_messages(self, websocket):
@@ -966,70 +929,106 @@ class WebSocketManager:
                 message = await asyncio.wait_for(websocket.recv(), timeout=30)
                 data = json.loads(message)
                 
-                if data.get('event') == 'update' and 'result' in data:
-                    result = data['result']
+                # Обработка события update
+                if data.get('event') == 'update' and data.get('channel') == 'futures.tickers':
+                    result = data.get('result')
                     
-                    if isinstance(result, dict):
-                        symbol = result.get('contract', '').replace('_', '')
-                        if 'last' in result:
-                            price = float(result['last'])
-                            await self.price_handler.handle_price_update('gateio', symbol, price, )
+                    # Может прийти список или один объект
+                    items = result if isinstance(result, list) else [result]
                     
-                    elif isinstance(result, list):
-                        for ticker in result:
-                            if isinstance(ticker, dict):
-                                symbol = ticker.get('contract', '').replace('_', '')
-                                if 'last' in ticker:
-                                    price = float(ticker['last'])
-                                    await self.price_handler.handle_price_update('gateio', symbol, price, )
+                    for item in items:
+                        if isinstance(item, dict):
+                            contract = item.get('contract', '') # BTC_USDT
+                            symbol = contract.replace('_', '') # BTCUSDT
+                            
+                            if 'last' in item:
+                                price = float(item['last'])
+                                await self.price_handler.handle_price_update('gateio', symbol, price)
                 
             except asyncio.TimeoutError:
-                ping_msg = {"event": "ping"}
-                await websocket.send(json.dumps(ping_msg))
+                # Gate требует пинг
+                try:
+                    if self.is_connection_open(websocket):
+                        ping_msg = {"time": int(time.time()), "channel": "futures.ping"}
+                        await websocket.send(json.dumps(ping_msg))
+                except:
+                    break
             except Exception as e:
-                logger.error(f"Gate.io message error: {e}")
+                logger.error(f"❌ Gate.io message error: {e}")
                 break
 
     async def connect_bitget(self) -> bool:
-        """Bitget Futures WebSocket - полностью исправленная версия"""
-        try:
-            # Правильный URL для фьючерсов Bitget
-            url = "wss://ws.bitget.com/v2/ws/public"
-            
-            websocket = await websockets.connect(url, ping_interval=20, ping_timeout=10)
-            self.connections['bitget'] = websocket
-            
-            # ПРАВИЛЬНЫЙ формат подписки для фьючерсов Bitget
-            subscribe_args = []
-            for symbol in Config.FUTURES_SYMBOLS:
-                subscribe_args.append({
-                    "instType": "USDT-FUTURES",  # ИСПРАВЛЕНО: правильный тип инструмента
-                    "channel": "ticker", 
-                    "instId": symbol
-                })
-            
-            subscribe_msg = {
-                "op": "subscribe",
-                "args": subscribe_args
-            }
-            
-            await websocket.send(json.dumps(subscribe_msg))
-            logger.info("✅ Bitget: Correct USDT-FUTURES subscription sent")
-            
-            # Ждем ответа от биржи
+            """Bitget Futures WebSocket (v2 Optimized)"""
             try:
-                response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
-                response_data = json.loads(response)
-                logger.info(f"🔍 Bitget subscription response: {response_data}")
+                url = "wss://ws.bitget.com/v2/ws/public"
+                websocket = await websockets.connect(url, ping_interval=20, ping_timeout=10)
+                self.connections['bitget'] = websocket
+                
+                # Формируем список аргументов для подписки
+                args = []
+                for symbol in Config.FUTURES_SYMBOLS:
+                    bitget_symbol = self.get_exchange_symbol('bitget', symbol)
+                    args.append({
+                        "instType": "USDT-FUTURES",
+                        "channel": "ticker",
+                        "instId": bitget_symbol
+                    })
+                
+                subscribe_msg = {
+                    "op": "subscribe",
+                    "args": args
+                }
+                
+                await websocket.send(json.dumps(subscribe_msg))
+                logger.info(f"✅ Bitget subscribed to {len(args)} symbols")
+                
+                asyncio.create_task(self.handle_bitget_messages(websocket))
+                return True
+                
+            except Exception as e:
+                logger.error(f"❌ Bitget connection failed: {e}")
+                return False
+
+    async def handle_bitget_messages(self, websocket):
+        """Обработчик Bitget (Исправлено: поддержка 'update')"""
+        logger.info("📝 Bitget handler started")
+        
+        while self.is_running and self.is_connection_open(websocket):
+            try:
+                message = await asyncio.wait_for(websocket.recv(), timeout=30)
+                
+                # Bitget может прислать просто "pong" (хотя обычно json)
+                if message == "pong":
+                    continue
+                    
+                data = json.loads(message)
+                
+                # Обработка ping
+                if data.get('op') == 'ping':
+                    await websocket.send(json.dumps({"op": "pong"}))
+                    continue
+                
+                # ВАЖНОЕ ИСПРАВЛЕНИЕ: Bitget шлет 'snapshot' первый раз, потом 'update'
+                action = data.get('action')
+                if action in ['snapshot', 'update'] and 'data' in data:
+                    for ticker in data['data']:
+                        symbol = ticker.get('instId')
+                        # В update может быть lastPr, а может не быть (если цена не менялась)
+                        if symbol and 'lastPr' in ticker:
+                            price = float(ticker['lastPr'])
+                            await self.price_handler.handle_price_update('bitget', symbol, price)
+                            
             except asyncio.TimeoutError:
-                logger.warning("⏰ No immediate response from Bitget")
-            
-            asyncio.create_task(self.handle_bitget_messages(websocket))
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Bitget connection failed: {e}")
-            return False
+                try:
+                    if self.is_connection_open(websocket):
+                        await websocket.send(json.dumps({"op": "ping"}))
+                except:
+                    break
+            except Exception as e:
+                logger.error(f"❌ Bitget processing error: {e}")
+                break
+        
+        logger.info("🔚 Bitget handler stopped")
 
     async def handle_bitget_messages(self, websocket):
         """Обработчик Bitget - полностью переписанный"""
@@ -1101,95 +1100,108 @@ class WebSocketManager:
             except Exception as e:
                 logger.error(f"Bitget alternative subscription failed: {e}")
     async def connect_mexc(self) -> bool:
-        """MEXC с упрощенной стабильной версией"""
-        try:
-            url = "wss://contract.mexc.com/edge"
-            logger.info(f"🔄 MEXC: Connecting to {url}")
-            
-            websocket = await websockets.connect(
-                url, 
-                ping_interval=25,
-                ping_timeout=20,
-                close_timeout=15
-            )
-            self.connections['mexc'] = websocket
-            
-            # ПРОСТАЯ ПОДПИСКА НА ВСЕ ТИКЕРЫ
-            subscribe_msg = {
-                "method": "sub.tickers",
-                "param": {}
-            }
-            
-            await websocket.send(json.dumps(subscribe_msg))
-            logger.info("✅ MEXC: Subscribed to all tickers")
-            
-            asyncio.create_task(self.handle_mexc_messages_simple(websocket))
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ MEXC connection failed: {e}")
-            return False
+            """MEXC Futures WebSocket (Specific Symbols)"""
+            try:
+                url = "wss://contract.mexc.com/edge"
+                
+                # Важно: MEXC часто разрывает соединение, если пинг не настроен
+                websocket = await websockets.connect(
+                    url, 
+                    ping_interval=20,
+                    ping_timeout=10
+                )
+                self.connections['mexc'] = websocket
+                
+                # Подписываемся ТОЛЬКО на монеты из конфига
+                for symbol in Config.FUTURES_SYMBOLS:
+                    # Получаем символ вида BTC_USDT
+                    mexc_symbol = self.get_exchange_symbol('mexc', symbol)
+                    
+                    subscribe_msg = {
+                        "method": "sub.ticker",
+                        "param": {
+                            "symbol": mexc_symbol
+                        }
+                    }
+                    await websocket.send(json.dumps(subscribe_msg))
+                    # Микро-задержка для стабильности
+                    await asyncio.sleep(0.05)
+                
+                logger.info(f"✅ MEXC subscribed to {len(Config.FUTURES_SYMBOLS)} symbols")
+                
+                asyncio.create_task(self.handle_mexc_messages_simple(websocket))
+                return True
+                
+            except Exception as e:
+                logger.error(f"❌ MEXC connection failed: {e}")
+                return False
 
     async def handle_mexc_messages_simple(self, websocket):
-        """Упрощенный обработчик MEXC"""
-        logger.info("📝 MEXC simple handler started")
-        
-        while self.is_running and self.is_connection_open(websocket):
-            try:
-                message = await asyncio.wait_for(websocket.recv(), timeout=30)
-                
-                # Обработка ping
-                if message == '{"method":"ping"}':
-                    await websocket.send('{"method":"pong"}')
-                    continue
-                    
-                data = json.loads(message)
-                
-                # Обработка данных тикеров
-                if data.get('channel') == 'push.tickers' and 'data' in data:
-                    for ticker in data['data']:
-                        symbol = ticker.get('symbol', '').replace('_USDT', 'USDT')
-                        if 'lastPrice' in ticker:
-                            price = float(ticker['lastPrice'])
-                            await self.price_handler.handle_price_update('mexc', symbol, price)
-                            
-            except asyncio.TimeoutError:
-                # Простой ping
+            """Упрощенный обработчик MEXC (Исправленный каналы)"""
+            logger.info("📝 MEXC simple handler started")
+            
+            while self.is_running and self.is_connection_open(websocket):
                 try:
-                    if self.is_connection_open(websocket):
-                        ping_msg = {"method": "ping"}
-                        await websocket.send(json.dumps(ping_msg))
-                except:
+                    message = await asyncio.wait_for(websocket.recv(), timeout=30)
+                    
+                    # Обработка ping (MEXC присылает просто текст или json)
+                    if message == '{"method":"ping"}':
+                        await websocket.send('{"method":"pong"}')
+                        continue
+                        
+                    data = json.loads(message)
+                    
+                    # Игнорируем сообщения об успехе подписки
+                    if data.get('msg') == 'success':
+                        continue
+
+                    # ИСПРАВЛЕНИЕ: Проверяем оба варианта названия канала (ticker и tickers)
+                    channel = data.get('channel')
+                    if (channel == 'push.ticker' or channel == 'push.tickers') and 'data' in data:
+                        tick_data = data['data']
+                        
+                        # Если пришел один объект (dict), превращаем его в список для универсальности
+                        if isinstance(tick_data, dict):
+                            tick_data = [tick_data]
+                            
+                        for ticker in tick_data:
+                            symbol = ticker.get('symbol', '').replace('_USDT', 'USDT')
+                            if 'lastPrice' in ticker:
+                                price = float(ticker['lastPrice'])
+                                await self.price_handler.handle_price_update('mexc', symbol, price)
+                                
+                except asyncio.TimeoutError:
+                    # Простой ping для поддержания соединения
+                    try:
+                        if self.is_connection_open(websocket):
+                            ping_msg = {"method": "ping"}
+                            await websocket.send(json.dumps(ping_msg))
+                    except:
+                        break
+                except Exception as e:
+                    logger.error(f"❌ MEXC message error: {e}")
                     break
-            except Exception as e:
-                logger.error(f"❌ MEXC message error: {e}")
-                break
-        
-        logger.info("🔚 MEXC handler stopped")
+            
+            logger.info("🔚 MEXC handler stopped")
 
     async def connect_bingx(self) -> bool:
-        """BingX с улучшенной стабильностью и приоритетными символами"""
-        try:
-            url = "wss://open-api-swap.bingx.com/swap-market"
-            
-            logger.info(f"🔄 BingX: Connecting to {url}")
-            
-            websocket = await websockets.connect(
-                url, 
-                ping_interval=25,
-                ping_timeout=20,
-                close_timeout=15,
-                max_queue=1024
-            )
-            self.connections['bingx'] = websocket
-            
-            # ПРИОРИТЕТНЫЕ СИМВОЛЫ ДЛЯ НАЧАЛА
-            priority_symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT']
-            
-            successful_subscriptions = 0
-            for symbol in priority_symbols:
-                try:
-                    bingx_symbol = symbol.replace('USDT', '-USDT')
+            """BingX WebSocket (All Config Symbols)"""
+            try:
+                url = "wss://open-api-swap.bingx.com/swap-market"
+                
+                websocket = await websockets.connect(
+                    url, 
+                    ping_interval=30, # BingX требует частый пинг
+                    ping_timeout=20,
+                    max_queue=2048
+                )
+                self.connections['bingx'] = websocket
+                
+                # Итерируемся по ВСЕМ символам из конфига
+                for symbol in Config.FUTURES_SYMBOLS:
+                    # Формат: BTC-USDT
+                    bingx_symbol = self.get_exchange_symbol('bingx', symbol)
+                    
                     subscribe_msg = {
                         "id": f"id_{int(time.time())}_{symbol}",
                         "reqType": "sub",
@@ -1197,21 +1209,16 @@ class WebSocketManager:
                     }
                     
                     await websocket.send(json.dumps(subscribe_msg))
-                    successful_subscriptions += 1
-                    await asyncio.sleep(0.3)  # Увеличиваем задержку для стабильности
-                    
-                except Exception as e:
-                    logger.error(f"❌ BingX subscription failed for {symbol}: {e}")
-            
-            logger.info(f"✅ BingX subscribed to {successful_subscriptions}/{len(priority_symbols)} symbols")
-            
-            # ЗАПУСКАЕМ ОБРАБОТЧИК
-            asyncio.create_task(self.handle_bingx_messages_improved(websocket))
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ BingX connection failed: {e}")
-            return False
+                    await asyncio.sleep(0.05)
+                
+                logger.info(f"✅ BingX subscribed to {len(Config.FUTURES_SYMBOLS)} symbols")
+                
+                asyncio.create_task(self.handle_bingx_messages_improved(websocket))
+                return True
+                
+            except Exception as e:
+                logger.error(f"❌ BingX connection failed: {e}")
+                return False
     async def process_bingx_data_safe(self, data):
         """Безопасная обработка данных BingX с обработкой исключений"""
         try:
@@ -1335,91 +1342,60 @@ class WebSocketManager:
             logger.debug(f"🔍 Bingx error traceback: {traceback.format_exc()}")
 
     async def connect_kucoin(self) -> bool:
-        """KuCoin с правильными символами для Futures"""
-        try:
-            logger.info("🚀 STARTING KUCONN WITH FUTURES SYMBOLS")
-            
-            # Получаем токен
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    'https://api-futures.kucoin.com/api/v1/bullet-public',
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    data = await resp.json()
+            """KuCoin Futures WebSocket (ИСПРАВЛЕНО: создание маппинга)"""
+            try:
+                # Получаем токен (без изменений)
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        'https://api-futures.kucoin.com/api/v1/bullet-public',
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as resp:
+                        data = await resp.json()
+                        if data['code'] != '200000':
+                            logger.error(f"❌ KuCoin token error: {data}")
+                            return False
+                        endpoint = data['data']['instanceServers'][0]['endpoint']
+                        token = data['data']['token']
+                        url = f"{endpoint}?token={token}&connectId={int(time.time())}"
+                
+                websocket = await websockets.connect(url, ping_interval=20, ping_timeout=10)
+                self.connections['kucoin'] = websocket
+                
+                # Ждем приветствие
+                await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                
+                # --- ИСПРАВЛЕНИЕ НАЧИНАЕТСЯ ЗДЕСЬ ---
+                # 1. Инициализируем словарь маппинга
+                self.kucoin_symbol_mapping = {} 
+                
+                # 2. Формируем подписки и заполняем маппинг
+                for i, symbol in enumerate(Config.FUTURES_SYMBOLS):
+                    # Получаем символ биржи (например, SUIUSDTM)
+                    kucoin_symbol = self.get_exchange_symbol('kucoin', symbol)
                     
-                    if data['code'] != '200000':
-                        logger.error(f"❌ KuCoin token error: {data}")
-                        return False
+                    # Сохраняем связь: SUIUSDTM -> SUIUSDT
+                    self.kucoin_symbol_mapping[kucoin_symbol] = symbol
                     
-                    endpoint = data['data']['instanceServers'][0]['endpoint']
-                    token = data['data']['token']
-                    url = f"{endpoint}?token={token}&connectId={int(time.time())}"
-            
-            logger.info(f"🔗 KuCoin connecting to: {url}")
-            
-            websocket = await websockets.connect(url, ping_interval=20, ping_timeout=10)
-            self.connections['kucoin'] = websocket
-            
-            # Ждем welcome сообщение
-            welcome = await asyncio.wait_for(websocket.recv(), timeout=5.0)
-            logger.info(f"🔍 KuCoin welcome: {welcome}")
-            
-            # ИСПРАВЛЕНИЕ: Используем правильные символы для KuCoin Futures
-            # KuCoin Futures использует XBT вместо BTC и другие форматы
-            kucoin_symbols = {
-                'BTCUSDT': 'XBTUSDT',  # KuCoin использует XBT для Bitcoin в фьючерсах
-                'ETHUSDT': 'ETHUSDT',
-                'BNBUSDT': 'BNBUSDT', 
-                'SOLUSDT': 'SOLUSDT',
-                'ADAUSDT': 'ADAUSDT',
-            }
-            
-            subscriptions = []
-            for standard_symbol, kucoin_symbol in kucoin_symbols.items():
-                subscriptions.extend([
-                    {
-                        "id": len(subscriptions) + 1, 
+                    subscribe_msg = {
+                        "id": i + 1, 
                         "type": "subscribe", 
                         "topic": f"/contractMarket/ticker:{kucoin_symbol}",
                         "privateChannel": False, 
                         "response": True
-                    },
-                    {
-                        "id": len(subscriptions) + 2,
-                        "type": "subscribe",
-                        "topic": f"/contractMarket/snapshot:{kucoin_symbol}",
-                        "privateChannel": False,
-                        "response": True
                     }
-                ])
-            
-            for sub in subscriptions:
-                await websocket.send(json.dumps(sub))
-                logger.info(f"📨 KuCoin subscribing: {sub['topic']}")
+                    await websocket.send(json.dumps(subscribe_msg))
+                    # Небольшая задержка, чтобы не спамить запросами
+                    await asyncio.sleep(0.05) 
                 
-                # Ждем подтверждение для каждой подписки
-                try:
-                    ack = await asyncio.wait_for(websocket.recv(), timeout=3.0)
-                    ack_data = json.loads(ack)
-                    logger.info(f"✅ KuCoin subscription ack: {ack_data}")
-                    
-                except asyncio.TimeoutError:
-                    logger.warning(f"⏰ KuCoin no ack for {sub['topic']}")
+                # logger.info(f"✅ KuCoin mapped {len(self.kucoin_symbol_mapping)} symbols")
+                # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
+                asyncio.create_task(self.kucoin_futures_handler(websocket))
+                return True
                 
-                await asyncio.sleep(0.3)
-            
-            # Создаем mapping для обратного преобразования символов
-            self.kucoin_symbol_mapping = {v: k for k, v in kucoin_symbols.items()}
-            
-            # Запускаем обработчик
-            asyncio.create_task(self.kucoin_futures_handler(websocket))
-            
-            logger.info("✅ KuCoin futures connection established")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ KuCoin connection failed: {e}")
-            return False
+            except Exception as e:
+                logger.error(f"❌ KuCoin connection failed: {e}")
+                return False
 
     async def kucoin_futures_handler(self, websocket):
         """Обработчик для KuCoin Futures с преобразованием символов"""
@@ -1432,7 +1408,7 @@ class WebSocketManager:
                 message_count += 1
                 
                 # Логируем КАЖДОЕ сообщение
-                logger.info(f"🔍 KUCONN FUTURES #{message_count}: {message}")
+                # logger.info(f"🔍 KUCONN FUTURES #{message_count}: {message}")
                 
                 data = json.loads(message)
                 
@@ -1477,7 +1453,7 @@ class WebSocketManager:
                 logger.warning(f"⚠️ Unknown KuCoin symbol: {kucoin_symbol}")
                 return
             
-            logger.info(f"🔍 KuCoin processing: {kucoin_symbol} -> {standard_symbol}")
+            # logger.info(f"🔍 KuCoin processing: {kucoin_symbol} -> {standard_symbol}")
             
             # Ищем цену в данных
             price = None
@@ -1503,7 +1479,7 @@ class WebSocketManager:
             
             if price and price > 0:
                 await self.price_handler.handle_price_update('kucoin', standard_symbol, price, )
-                logger.info(f"🎯 KUCONN FUTURES PRICE: {standard_symbol} = {price}")
+                # logger.info(f"🎯 KUCONN FUTURES PRICE: {standard_symbol} = {price}")
             else:
                 logger.warning(f"⚠️ KuCoin no price in data: {message_data}")
                 
@@ -1652,230 +1628,156 @@ class WebSocketManager:
                 
         except Exception as e:
             logger.error(f"❌ KuCoin snapshot processing error: {e}")
+
     async def connect_phemex(self) -> bool:
-        """Исправленное подключение Phemex - используем только рабочие методы"""
+        """
+        Phemex Connection: Non-blocking architecture.
+        Запускает подписку в фоне, чтобы мгновенно начать слать пинги.
+        """
         try:
-            logger.info("🚀 STARTING PHEMEX FIXED CONNECTION")
+            # 1. SSL Context
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
             
-            url = "wss://ws.phemex.com"
-            logger.info(f"🔗 Phemex connecting to: {url}")
-            
-            websocket = await websockets.connect(url, ping_interval=30, ping_timeout=20)
+            # 2. Подключение
+            logger.info("🔵 Connecting to Phemex WS...")
+            websocket = await websockets.connect(
+                "wss://ws.phemex.com", 
+                ssl=ssl_context,
+                ping_interval=None, # Мы сами шлем пинги
+                max_size=None
+            )
             self.connections['phemex'] = websocket
             
-            # Создаем задачу для логирования
-            asyncio.create_task(self.phemex_raw_logger_fixed(websocket))
+            # 3. ЗАПУСК ЗАДАЧ ПАРАЛЛЕЛЬНО (Критическое исправление)
+            # Раньше мы ждали окончания подписки, теперь это независимые процессы
+            asyncio.create_task(self.phemex_heartbeat(websocket))       # Пинг (самый важный)
+            asyncio.create_task(self.handle_phemex_messages(websocket)) # Чтение
+            asyncio.create_task(self.phemex_subscribe_task(websocket))  # Подписка (фон)
             
-            # ИСПРАВЛЕНИЕ: Используем ТОЛЬКО рабочие методы из логов
-            # tick.subscribe для ETHUSDT работает - расширим на другие символы
-            working_symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'XRPUSDT']
-            
-            for i, symbol in enumerate(working_symbols):
-                try:
-                    method = {
-                        "id": i + 1, 
-                        "method": "tick.subscribe", 
-                        "params": [symbol]
-                    }
-                    await websocket.send(json.dumps(method))
-                    logger.info(f"📨 Phemex subscribing to ticker: {symbol}")
-                    await asyncio.sleep(0.2)  # Задержка между подписками
-                except Exception as e:
-                    logger.error(f"❌ Phemex subscription for {symbol} failed: {e}")
-            
-            logger.info("✅ Phemex fixed connection established")
+            logger.info("✅ Phemex tasks started. Connection established.")
             return True
             
         except Exception as e:
             logger.error(f"❌ Phemex connection failed: {e}")
             return False
 
-    async def phemex_raw_logger_fixed(self, websocket):
-        """Исправленный обработчик Phemex - полная защита от None"""
-        logger.info("📝 STARTING PHEMEX FIXED MESSAGE LOGGER")
-        message_count = 0
+    async def phemex_subscribe_task(self, websocket):
+        """
+        Фоновая задача для отправки подписок.
+        Использует формат uBTCUSD (самый надежный для Phemex).
+        """
+        await asyncio.sleep(1) # Даем секунду на установку соединения и первый пинг
         
-        while self.is_running and self.is_connection_open(websocket):
+        for config_symbol in Config.FUTURES_SYMBOLS:
+            if not self.is_connection_open(websocket):
+                break
+                
             try:
-                message = await asyncio.wait_for(websocket.recv(), timeout=30)
-                message_count += 1
+                # Конвертация: BTCUSDT -> uBTCUSD
+                base = config_symbol.replace('USDT', '').replace('_', '')
+                phemex_symbol = f"u{base}USD"
                 
-                # ЗАЩИТА: Проверяем что message не None и не пустой
-                if not message:
-                    logger.warning("🔍 PHEMEX EMPTY MESSAGE")
-                    continue
-                    
-                try:
-                    data = json.loads(message)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"🔍 PHEMEX NON-JSON: {message}")
-                    continue
+                sub_msg = {
+                    "id": int(time.time() * 1000),
+                    "method": "tick.subscribe",
+                    "params": [phemex_symbol]
+                }
                 
-                # Логируем ВСЕ сообщения первые 50
-                if message_count <= 50:
-                    logger.info(f"🔍 PHEMEX FIXED #{message_count}: {data}")
+                await websocket.send(json.dumps(sub_msg))
+                # logger.info(f"📤 Sent sub for {phemex_symbol}")
+                await asyncio.sleep(0.1) # Вежливая задержка
                 
-                # Обработка ping - ЗАЩИТА ОТ None
-                if data and isinstance(data, dict) and data.get('method') == 'server.ping':
-                    pong_msg = {'method': 'server.pong', 'params': []}
-                    await websocket.send(json.dumps(pong_msg))
-                    continue
-                
-                # ОСНОВНОЙ ФОКУС: обработка tick.update - ЗАЩИТА ОТ None
-                if data and isinstance(data, dict) and data.get('method') == 'tick.update' and 'params' in data:
-                    await self.process_phemex_tick_update(data)
-                
-                # Обработка успешных подписок - ПОЛНАЯ ЗАЩИТА ОТ None
-                if (data and isinstance(data, dict) and 
-                    data.get('result') and 
-                    isinstance(data.get('result'), dict) and 
-                    data.get('result').get('status') == 'success'):
-                    logger.info(f"✅ Phemex subscription success: {data}")
-                    
-            except asyncio.TimeoutError:
-                ping_msg = {'method': 'server.ping', 'params': []}
-                await websocket.send(json.dumps(ping_msg))
             except Exception as e:
-                logger.error(f"❌ Phemex logger error: {e}")
-                # Логируем стектрейс для диагностики
-                import traceback
-                logger.error(f"🔍 Phemex error traceback: {traceback.format_exc()}")
-                # НЕ выходим из цикла, продолжаем работу
-                await asyncio.sleep(5)
+                logger.debug(f"Phemex sub error: {e}")
+                break
 
-    async def process_phemex_tick_update(self, data):
-        """Специализированная обработка tick.update для Phemex"""
-        try:
-            params = data['params']
-            if len(params) >= 2:
-                symbol = params[0]
-                tick_data = params[1]
-                
-                logger.info(f"🎯 PHEMEX TICK UPDATE: {symbol} - {tick_data}")
-                
-                # Извлекаем цену из tick данных
-                price = None
-                if 'last' in tick_data and tick_data['last']:
-                    price = float(tick_data['last'])
-                elif 'markPrice' in tick_data and tick_data['markPrice']:
-                    price = float(tick_data['markPrice'])
-                elif 'indexPrice' in tick_data and tick_data['indexPrice']:
-                    price = float(tick_data['indexPrice'])
-                elif 'fairPrice' in tick_data and tick_data['fairPrice']:
-                    price = float(tick_data['fairPrice'])
-                
-                if price and price > 0:
-                    await self.price_handler.handle_price_update('phemex', symbol, price, )
-                    logger.info(f"✅ PHEMEX PRICE UPDATED: {symbol} = {price}")
-                else:
-                    logger.warning(f"⚠️ Phemex no price in tick data: {tick_data}")
-                    
-        except Exception as e:
-            logger.error(f"Phemex tick processing error: {e}")
-    async def handle_phemex_messages_improved(self, websocket):
-        """УЛУЧШЕННЫЙ обработчик Phemex с детальным логированием"""
-        message_count = 0
-        
+    async def phemex_heartbeat(self, websocket):
+        """
+        Агрессивный пинг каждые 5 секунд.
+        Phemex разрывает соединение, если пинга нет > 10 сек.
+        """
         while self.is_running and self.is_connection_open(websocket):
             try:
-                message = await asyncio.wait_for(websocket.recv(), timeout=30)
+                # Отправляем пинг
+                ping_msg = {"id": int(time.time()), "method": "server.ping", "params": []}
+                await websocket.send(json.dumps(ping_msg))
+                
+                # Ждем 5 секунд
+                await asyncio.sleep(5)
+            except Exception:
+                break
+
+    async def handle_phemex_messages(self, websocket):
+        """Обработчик сообщений"""
+        logger.info("📝 Phemex handler started reading...")
+        
+        # Кэш для scale
+        symbol_scales = defaultdict(lambda: 4)
+        
+        while self.is_running:
+            try:
+                # Ждем сообщения
+                message = await websocket.recv()
                 data = json.loads(message)
                 
-                # Логируем ВСЕ сообщения для диагностики
-                if message_count < 20:
-                    logger.info(f"🔍 Phemex RAW message {message_count}: {data}")
-                    message_count += 1
-                
-                # Обработка ping от сервера
+                # 1. Обработка Ping/Pong от сервера
                 if data.get('method') == 'server.ping':
-                    pong_msg = {'method': 'server.pong', 'params': []}
-                    await websocket.send(json.dumps(pong_msg))
-                    logger.debug("✅ Phemex answered ping")
+                    await websocket.send(json.dumps({"id": data.get('id'), "method": "server.pong", "params": []}))
                     continue
-                    
-                # Обработка ответа на подписку
-                if data.get('result') == 'ok':
-                    logger.info(f"✅ Phemex subscription success: {data}")
+                if data.get('result') == 'pong':
                     continue
-                    
-                # Обработка ошибок
-                if data.get('error'):
-                    logger.error(f"❌ Phemex error: {data}")
-                    continue
-                
-                # Обработка рыночных данных
-                await self.process_phemex_market_data(data)
-                    
-            except asyncio.TimeoutError:
-                # Отправляем ping для поддержания соединения
-                ping_msg = {'method': 'server.ping', 'params': []}
-                await websocket.send(json.dumps(ping_msg))
-                logger.debug("🔍 Phemex sent ping")
-            except Exception as e:
-                if "1000 (OK)" in str(e):
-                    logger.debug("Phemex connection closed normally")
-                    break
-                else:
-                    logger.error(f"Phemex message error: {e}")
-                    break
 
-    async def process_phemex_market_data(self, data):
-        """Обработка рыночных данных Phemex"""
-        try:
-            # Обработка тиковых данных
-            if data.get('method') == 'tick.update' and 'params' in data:
-                params = data['params']
-                if len(params) >= 2:
-                    symbol = params[0]
-                    tick_data = params[1]
-                    
-                    # Получаем последнюю цену
-                    if 'last' in tick_data:
-                        price = float(tick_data['last'])
-                        await self.price_handler.handle_price_update('phemex', symbol, price, )
-                        logger.info(f"✅ Phemex TICK price: {symbol} = {price}")
-                    elif 'markPrice' in tick_data:
-                        price = float(tick_data['markPrice'])
-                        await self.price_handler.handle_price_update('phemex', symbol, price, )
-                        logger.info(f"✅ Phemex MARK price: {symbol} = {price}")
-            
-            # Обработка стакана
-            elif data.get('method') == 'orderbook' and 'params' in data:
-                params = data['params']
-                if len(params) >= 2:
-                    symbol = params[0]
-                    orderbook_data = params[1]
-                    
-                    # Берем среднюю цену из лучших bid/ask
-                    if 'bids' in orderbook_data and 'asks' in orderbook_data:
-                        bids = orderbook_data['bids']
-                        asks = orderbook_data['asks']
+                # 2. Обработка ошибок (игнорируем 6001 тихо)
+                if 'error' in data:
+                    continue
+
+                # 3. Обработка данных
+                method = data.get('method')
+                if method in ['tick.update', 'tick.snapshot']:
+                    params = data.get('params', [])
+                    if len(params) >= 2:
+                        p_symbol = params[0] # uBTCUSD
+                        tick_data = params[1]
                         
-                        if bids and asks:
-                            best_bid = float(bids[0][0])
-                            best_ask = float(asks[0][0])
-                            mid_price = (best_bid + best_ask) / 2
-                            
-                            await self.price_handler.handle_price_update('phemex', symbol, mid_price, )
-                            logger.info(f"✅ Phemex ORDERBOOK price: {symbol} = {mid_price}")
-            
-            # Обработка торгов
-            elif data.get('method') == 'trade' and 'params' in data:
-                params = data['params']
-                if len(params) >= 2:
-                    symbol = params[0]
-                    trades = params[1]
-                    if trades and len(trades) > 0:
-                        # Берем последнюю сделку
-                        last_trade = trades[0]
-                        if 'price' in last_trade:
-                            price = float(last_trade['price'])
-                            await self.price_handler.handle_price_update('phemex', symbol, price, )
-                            logger.info(f"✅ Phemex TRADE price: {symbol} = {price}")
-                            
-        except Exception as e:
-            logger.error(f"Phemex market data processing error: {e}")
-            logger.error(f"Problematic data: {data}")
+                        # --- КОНВЕРТАЦИЯ uBTCUSD -> BTCUSDT ---
+                        std_symbol = None
+                        if p_symbol.startswith('u') and p_symbol.endswith('USD'):
+                            base = p_symbol[1:-3]
+                            std_symbol = f"{base}USDT"
+                        else:
+                            # Если пришло что-то странное, пропускаем
+                            continue
+
+                        # Обновление Scale
+                        if 'scale' in tick_data:
+                            symbol_scales[p_symbol] = tick_data['scale']
+                        
+                        raw_price = tick_data.get('last')
+                        if raw_price is not None:
+                            scale = symbol_scales[p_symbol]
+                            try:
+                                price = float(raw_price)
+                                # Phemex logic: int -> float conversion
+                                if isinstance(raw_price, int):
+                                    price = price / (10 ** scale)
+                                
+                                if price > 0:
+                                    await self.price_handler.handle_price_update('phemex', std_symbol, price)
+                            except:
+                                pass
+
+            except websockets.exceptions.ConnectionClosed as e:
+                logger.warning(f"🔌 Phemex connection closed: {e}")
+                break
+            except Exception as e:
+                logger.error(f"❌ Phemex handler critical error: {e}")
+                await asyncio.sleep(1)
+                break
+        
+        self.failed_exchanges.add('phemex')
+        self.connected_exchanges.discard('phemex')
 
     async def stop(self):
         """Остановка всех соединений"""
